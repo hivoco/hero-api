@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+*.log
+.DS_Store
+downloads/
+*.csv
+
+# GeoIP database (large, fetched via scripts/download_geoip.sh)
+app/data/*.mmdb

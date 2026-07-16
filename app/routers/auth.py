@@ -1,0 +1,152 @@
+import logging
+from uuid import uuid4
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.security import hash_phone
+from app.core.otp import generate_otp, hash_otp, send_otp, send_thank_you
+from app.core.timezone import get_ist_now
+from app.core.config import settings
+from app.core.redis import RateLimiter, Cache
+
+from app.models.user import User
+from app.models.user_otp import UserOTP
+from app.models.user_verification import UserVerification
+from app.models.job import Job
+from app.routers.video import _clean_number
+from app.services.settings_service import get_held_numbers
+
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@router.post("/verify-otp")
+def verify_otp(payload: dict, db: Session = Depends(get_db)):
+    if "mobile_number" not in payload or "otp" not in payload:
+        raise HTTPException(status_code=400, detail="Missing required fields: mobile_number and otp")
+
+    mobile_number = payload["mobile_number"]
+
+    allowed, _ = RateLimiter.check_rate_limit(mobile_number, "verify_otp", max_requests=10, window_seconds=300)
+    if not allowed:
+        retry_after = RateLimiter.get_remaining_time(mobile_number, "verify_otp")
+        raise HTTPException(status_code=429, detail=f"Too many verification attempts. Try again in {retry_after} seconds.",
+                            headers={"Retry-After": str(retry_after)})
+
+    phone_hash = hash_phone(mobile_number)
+    otp_input = payload["otp"]
+
+    user = db.query(User).filter(User.phone_hash == phone_hash).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found. Please submit the form first.")
+
+    otp = (
+        db.query(UserOTP)
+        .filter(UserOTP.user_id == user.id, UserOTP.is_used == False,  # noqa: E712
+                UserOTP.expires_at > get_ist_now())
+        .order_by(UserOTP.created_at.desc())
+        .first()
+    )
+    if not otp:
+        raise HTTPException(status_code=400, detail="No valid OTP found. Please request a new OTP.")
+    if otp.otp_hash != hash_otp(otp_input):
+        raise HTTPException(status_code=400, detail="Invalid OTP. Please check and try again.")
+
+    otp.is_used = True
+    otp.used_at = get_ist_now()
+
+    verification = db.query(UserVerification).filter_by(user_id=user.id).first()
+    if not verification:
+        raise HTTPException(status_code=500, detail="Verification record not found. Please contact support.")
+    verification.is_verified = True
+    verification.verified_at = get_ist_now()
+    verification.verification_method = "otp"
+
+    waiting_job = db.query(Job).filter(Job.user_id == user.id, Job.status == "wait").first()
+    if waiting_job:
+        # OTP is now verified. Roles are NULL exactly when the selfie was never
+        # validated (admin had photo validation off at submit) → the job becomes
+        # "unverified" instead of entering the normal queue; otherwise held →
+        # process_stop, else queued.
+        if waiting_job.parent_role is None:
+            next_status = "unverified"
+        elif _clean_number(mobile_number) in get_held_numbers():
+            next_status = "process_stop"
+        else:
+            next_status = "queued"
+        waiting_job.status = next_status
+        waiting_job.updated_at = get_ist_now()
+        user.video_count += 1
+        db.commit()
+
+        Cache.set_pending_video(user.id, str(waiting_job.id))
+        print(f"✅ Job {waiting_job.id} status changed: wait → {next_status}")
+        try:
+            send_thank_you(mobile_number)
+        except Exception as e:
+            logger.warning("Failed to send thank you message: %s", str(e))
+
+        return {"status": "verified", "job_id": waiting_job.id,
+                "message": "OTP verified. Your video is now queued for processing."}
+
+    db.commit()
+    try:
+        send_thank_you(mobile_number)
+    except Exception as e:
+        logger.warning("Failed to send thank you message: %s", str(e))
+    return {"status": "verified", "message": "OTP verified successfully."}
+
+
+@router.post("/resend-otp")
+def resend_otp(payload: dict, db: Session = Depends(get_db)):
+    """Resend an OTP once the previous one has expired (max 3 per 10 minutes)."""
+    if "mobile_number" not in payload:
+        raise HTTPException(status_code=400, detail="Missing required field: mobile_number")
+
+    mobile_number = payload["mobile_number"]
+
+    allowed, _ = RateLimiter.check_rate_limit(mobile_number, "resend_otp", max_requests=3, window_seconds=600)
+    if not allowed:
+        retry_after = RateLimiter.get_remaining_time(mobile_number, "resend_otp")
+        raise HTTPException(status_code=429, detail=f"Too many OTP requests. Try again in {retry_after} seconds.",
+                            headers={"Retry-After": str(retry_after)})
+
+    phone_hash = hash_phone(mobile_number)
+    user = db.query(User).filter(User.phone_hash == phone_hash).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found. Please submit the form first.")
+
+    verification = db.query(UserVerification).filter_by(user_id=user.id).first()
+    if verification and verification.is_verified:
+        raise HTTPException(status_code=400, detail="User is already verified. No OTP needed.")
+
+    existing_otp = (
+        db.query(UserOTP)
+        .filter(UserOTP.user_id == user.id, UserOTP.is_used == False,  # noqa: E712
+                UserOTP.expires_at > get_ist_now())
+        .order_by(UserOTP.created_at.desc())
+        .first()
+    )
+    if existing_otp:
+        remaining = (existing_otp.expires_at - get_ist_now()).total_seconds()
+        raise HTTPException(status_code=400, detail=f"OTP is still valid. Please wait {int(remaining)} seconds before requesting a new one.")
+
+    otp = generate_otp()
+    logger.info("RESEND OTP for %s: %s", mobile_number, otp)
+    db.add(UserOTP(id=str(uuid4()), user_id=user.id, otp_hash=hash_otp(otp),
+                   expires_at=get_ist_now() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
+                   attempts=0, is_used=False))
+    db.commit()
+
+    try:
+        send_otp(mobile_number, otp)
+    except Exception as e:
+        logger.warning("Failed to send OTP: %s", str(e))
+
+    return {"status": "success", "message": "New OTP sent successfully",
+            "mobile_number": mobile_number, "expires_in_minutes": settings.OTP_EXPIRY_MINUTES}
