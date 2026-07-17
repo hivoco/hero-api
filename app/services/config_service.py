@@ -69,11 +69,18 @@ def ensure_default_config(db: Session) -> PipelineConfig:
 
 
 def snapshot_config_onto_job(job, config: PipelineConfig) -> None:
-    """Copy config_id + provider/model/quality from the active config onto a job."""
+    """Copy config_id + provider/model/quality from the active config onto a job.
+
+    NOT called at submit any more — those columns stay NULL until the worker
+    picks the job up (the frontend supplies none of them). Kept for the worker.
+
+    ⚠️ `pipeline_config.video_provider_1/_2` are ('seedance','kling') while
+    `jobs.video_provider` is ENUM('kie','segmind') — the two no longer share a
+    value domain, so the provider is intentionally NOT copied here. Reconcile
+    those enums before wiring it up.
+    """
     job.config_id = config.id
     job.photo_provider = config.photo_provider
     job.photo_model = config.photo_model
-    job.video_provider_1 = config.video_provider_1
-    job.video_provider_2 = config.video_provider_2
     job.video_model = config.video_model
     job.quality = config.video_quality

@@ -74,6 +74,19 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         print(f"  [WARN] Config seed skipped - {e}")
 
+    # IP -> city DB (~130 MB, not in git). Downloads once in the background on a
+    # fresh server; never blocks boot. Until it lands, jobs.city stays NULL.
+    try:
+        import os as _os
+        from app.core.geoip import ensure_db_async, _DB_PATH
+        if _os.path.isfile(_DB_PATH):
+            print(f"  [OK]   GeoIP     ({_os.path.getsize(_DB_PATH) / 1e6:.0f} MB)")
+        else:
+            print("  [..]   GeoIP     (missing — downloading in background)")
+        ensure_db_async()
+    except Exception as e:
+        print(f"  [WARN] GeoIP skipped - {e}")
+
     print("-" * 50)
     print("  Hero Destini API is ready!")
     print("=" * 50 + "\n")

@@ -14,7 +14,7 @@ from app.core.admin_auth import get_current_admin
 from app.core.otp import send_failed_message, send_video
 from app.core.redis import FeatureFlags, Cache
 from app.models.job import (
-    Job, JOB_STATUSES, FAILED_STAGES, PARENT_ROLES, CHILD_ROLES, WORLDS, STORIES,
+    Job, JOB_STATUSES, FAILED_STAGES, PARENT_ROLES, CHILD_ROLES, STORIES,
 )
 from app.models.job_assets import JobAssets
 from app.models.user import User
@@ -37,8 +37,7 @@ class JobResponse(BaseModel):
     parent_name: Optional[str] = None
     parent_role: Optional[str] = None
     child_role: Optional[str] = None
-    world: Optional[str] = None
-    challenge: Optional[str] = None
+    story: Optional[str] = None
     language: Optional[str] = None
     city: Optional[str] = None
     status: Optional[str] = None
@@ -50,8 +49,7 @@ class JobResponse(BaseModel):
     config_id: Optional[int] = None
     photo_provider: Optional[str] = None
     photo_model: Optional[str] = None
-    video_provider_1: Optional[str] = None
-    video_provider_2: Optional[str] = None
+    video_provider: Optional[str] = None
     video_model: Optional[str] = None
     quality: Optional[str] = None
     consent_version: Optional[str] = None
@@ -102,14 +100,14 @@ def _job_to_dict(job: Job, mobile_number: Optional[str]) -> dict:
         "id": job.id, "user_id": job.user_id, "mobile_number": mobile_number,
         "child_name": job.child_name, "parent_name": job.parent_name,
         "parent_role": job.parent_role, "child_role": job.child_role,
-        "world": job.world, "challenge": job.challenge,
+        "story": job.story,
         "language": job.language, "city": job.city,
         "status": job.status, "retry_count": job.retry_count,
         "locked_by": job.locked_by, "locked_at": job.locked_at,
         "failed_stage": job.failed_stage, "last_error_code": job.last_error_code,
         "config_id": job.config_id, "photo_provider": job.photo_provider,
-        "photo_model": job.photo_model, "video_provider_1": job.video_provider_1,
-        "video_provider_2": job.video_provider_2, "video_model": job.video_model,
+        "photo_model": job.photo_model, "video_provider": job.video_provider,
+        "video_model": job.video_model,
         "quality": job.quality, "consent_version": job.consent_version,
         "consent_ts": job.consent_ts, "ip_address": job.ip_address,
         "utm_source": job.utm_source,
@@ -126,7 +124,7 @@ def list_jobs(
     page_size: int = Query(20, ge=1, le=100),
     status: Optional[str] = Query(None),
     failed_stage: Optional[str] = Query(None),
-    world: Optional[str] = Query(None),
+    story: Optional[str] = Query(None),
     language: Optional[str] = Query(None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
@@ -147,8 +145,8 @@ def list_jobs(
             filters.append(Job.status.in_(status_values))
     if failed_stage:
         filters.append(Job.failed_stage == failed_stage)
-    if world:
-        filters.append(Job.world == world)
+    if story:
+        filters.append(Job.story == story)
     if language:
         filters.append(Job.language == language)
 
@@ -199,7 +197,7 @@ def list_jobs(
         items.append(JobResponse(**d))
 
     filters_applied = {k: v for k, v in {
-        "status": status, "failed_stage": failed_stage, "world": world, "language": language,
+        "status": status, "failed_stage": failed_stage, "story": story, "language": language,
         "mobile_number": mobile_number, "job_id": job_id, "user_id": user_id,
         "start_date": start_date.isoformat() if start_date else None,
         "end_date": end_date.isoformat() if end_date else None,
@@ -313,8 +311,7 @@ class UpdateJobFieldsRequest(BaseModel):
     parent_name: Optional[str] = None
     parent_role: Optional[str] = None
     child_role: Optional[str] = None
-    world: Optional[str] = None
-    challenge: Optional[str] = None
+    story: Optional[str] = None
     language: Optional[str] = None
     city: Optional[str] = None
 
@@ -338,14 +335,10 @@ def update_job_fields(job_id: int, body: UpdateJobFieldsRequest, db: Session = D
         if body.child_role not in CHILD_ROLES:
             raise HTTPException(status_code=400, detail=f"Invalid child_role. Must be one of: {', '.join(CHILD_ROLES)}")
         job.child_role = body.child_role; updated.append("child_role")
-    if body.world is not None:
-        if body.world not in WORLDS:
-            raise HTTPException(status_code=400, detail=f"Invalid world. Must be one of: {', '.join(WORLDS)}")
-        job.world = body.world; updated.append("world")
-    if body.challenge is not None:
-        if body.challenge not in STORIES:
+    if body.story is not None:
+        if body.story not in STORIES:
             raise HTTPException(status_code=400, detail=f"Invalid story. Must be one of: {', '.join(STORIES)}")
-        job.challenge = body.challenge; updated.append("challenge")
+        job.story = body.story; updated.append("story")
     if body.language is not None:
         job.language = body.language.strip(); updated.append("language")
     if body.city is not None:
@@ -467,7 +460,7 @@ def get_reports(
             "language": _grouped_counts(db, Job.language, filters),
             "parent_role": _grouped_counts(db, Job.parent_role, filters),
             "child_role": _grouped_counts(db, Job.child_role, filters),
-            "challenge": {str(k): v for k, v in _grouped_counts(db, Job.challenge, filters).items()},
+            "story": {str(k): v for k, v in _grouped_counts(db, Job.story, filters).items()},
             "city": _grouped_counts(db, Job.city, filters),
         },
     }
@@ -623,7 +616,7 @@ def download_reports_csv(
         writer.writerow([str(row.day), row.entries, int(row.sent or 0), int(row.failed or 0)])
     writer.writerow([])
 
-    for title, column in [("STATUS", Job.status), ("STORY", Job.challenge),
+    for title, column in [("STATUS", Job.status), ("STORY", Job.story),
                           ("LANGUAGE", Job.language), ("PARENT ROLE", Job.parent_role),
                           ("CHILD ROLE", Job.child_role), ("CITY", Job.city)]:
         writer.writerow([f"{title} BREAKDOWN"])

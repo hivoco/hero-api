@@ -15,7 +15,6 @@ from app.core.timezone import get_ist_now
 from app.core.redis import RateLimiter, Cache, FeatureFlags
 from app.core.geoip import city_from_ip
 from app.routers.photo_validation import verify_validation_token
-from app.services.config_service import get_active_config, ensure_default_config, snapshot_config_onto_job
 from app.services.settings_service import get_max_videos_per_user, get_unlimited_numbers, get_held_numbers
 
 from app.models.user import User
@@ -57,7 +56,7 @@ def _clean_number(mobile_number: str) -> str:
     return n
 
 
-def _validate_inputs(parent_name, parent_role, child_role, challenge, require_roles=True):
+def _validate_inputs(parent_name, parent_role, child_role, story, require_roles=True):
     if not parent_name or not parent_name.strip():
         raise HTTPException(status_code=400, detail="Parent name is required.")
     # Roles are derived from the validated photo. They're required on the normal
@@ -69,7 +68,7 @@ def _validate_inputs(parent_name, parent_role, child_role, challenge, require_ro
     if require_roles or child_role:
         if child_role not in CHILD_ROLES:
             raise HTTPException(status_code=400, detail=f"Invalid child_role. Must be one of: {', '.join(CHILD_ROLES)}")
-    if challenge not in STORIES:
+    if story not in STORIES:
         raise HTTPException(status_code=400, detail=f"Invalid story. Must be one of: {', '.join(STORIES)}")
 
 
@@ -103,8 +102,7 @@ async def submit_video_form(
     parent_name: str = Form(...),
     parent_role: str = Form(""),
     child_role: str = Form(""),
-    world: str = Form(""),
-    challenge: str = Form(...),
+    story: str = Form(...),
     language: str = Form("English"),
     city: str = Form(""),
     consent_accepted: bool = Form(...),
@@ -140,13 +138,12 @@ async def submit_video_form(
     # ── Field validation ─────────────────────────────────────────────
     if not mobile_number or len(mobile_number.strip()) < 10:
         raise HTTPException(status_code=400, detail="Invalid mobile number. Please provide a valid 10-digit number.")
-    _validate_inputs(parent_name, parent_role, child_role, challenge,
+    _validate_inputs(parent_name, parent_role, child_role, story,
                      require_roles=photo_validation_on)
     # Blank roles (validation off) persist as NULL rather than "".
     parent_role_val = parent_role or None
     child_role_val = child_role or None
-    # world + child_name are no longer collected on the form → persist as NULL.
-    world_val = world or None
+    # child_name isn't collected on the form → persist as NULL.
     child_name_val = child_name.strip() or None
     if not consent_accepted:
         raise HTTPException(status_code=400, detail="You must accept the consent terms to continue.")
@@ -154,9 +151,6 @@ async def submit_video_form(
         raise HTTPException(status_code=400, detail="No photo uploaded. Please upload a photo.")
     if os.path.splitext(photo.filename)[1].lower() not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Invalid file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}")
-
-    # ── Active pipeline config (snapshotted onto the job) ────────────
-    config = get_active_config(db) or ensure_default_config(db)
 
     # ── User lookup / creation ───────────────────────────────────────
     phone_hash = hash_phone(mobile_number)
@@ -196,15 +190,19 @@ async def submit_video_form(
         resolved_city = city_from_ip(client_ip)
 
     def build_job(status: str) -> Job:
-        job = Job(
+        # Only what the frontend actually gives us (+ server-derived ip/city).
+        # The pipeline snapshot — config_id, photo_provider, photo_model,
+        # video_provider, video_model, quality — is deliberately left NULL and
+        # filled in by the worker. So are child_name, locked_by, locked_at and
+        # last_error_code. UTM stays NULL unless it came in on the URL.
+        return Job(
             user_id=user.id,
             child_name=child_name_val,
             parent_name=parent_name.strip(),
             parent_role=parent_role_val,
             child_role=child_role_val,
-            world=world_val,
-            challenge=challenge,
-            language=(language or "English").strip(),
+            story=story,
+            language=(language or "english").strip(),
             city=resolved_city,
             status=status,
             consent_version=settings.CONSENT_VERSION,
@@ -214,8 +212,6 @@ async def submit_video_form(
             utm_medium=utm_medium or None,
             utm_campaign=utm_campaign or None,
         )
-        snapshot_config_onto_job(job, config)
-        return job
 
     # ── Unverified user: create 'wait' job + send OTP ────────────────
     if not verification.is_verified:

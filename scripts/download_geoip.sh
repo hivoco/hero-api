@@ -1,8 +1,12 @@
 #!/bin/bash
 # Download the free DB-IP "City Lite" database used for offline IP -> city
 # lookup (app/core/geoip.py). CC-BY-4.0, direct download, NO signup.
-# The .mmdb is ~125 MB, so it's gitignored — run this to (re)fetch it.
-# DB-IP refreshes monthly; re-run occasionally to stay current.
+#
+# NOTE: you normally do NOT need to run this. The app downloads the file itself
+# on startup when it's missing (see ensure_db_async() in app/core/geoip.py).
+# This script is just a manual/offline escape hatch, and a way to REFRESH the
+# data — DB-IP republishes monthly, and the app only downloads when the file is
+# absent, so delete the .mmdb and re-run this (or restart) to pick up a newer one.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
