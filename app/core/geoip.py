@@ -15,6 +15,7 @@ flow never breaks on geolocation.
 import gzip
 import ipaddress
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -27,7 +28,16 @@ from typing import Optional
 import geoip2.database
 import geoip2.errors
 
+from app.core.cities import INDIAN_CITIES
+
 logger = logging.getLogger(__name__)
+
+# DB-IP's free `city` field is the most specific locality it knows, so dense
+# metros come back as a colony ("Defence Colony", "Hashtsāl", "Vagholi"). The
+# coordinates are accurate though, so we snap them to the nearest known city
+# within this radius. Above it we keep DB-IP's own name (a rough name beats
+# nothing — e.g. genuine small towns and non-Indian IPs).
+_SNAP_KM = float(os.getenv("GEOIP_SNAP_KM", "60"))
 
 # Bundled DB path, overridable via env (e.g. a mounted volume in production).
 _DEFAULT_DB = os.path.normpath(
@@ -125,8 +135,52 @@ def ensure_db_async() -> None:
     threading.Thread(target=download_db, name="geoip-download", daemon=True).start()
 
 
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in km."""
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    h = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(h))
+
+
+def nearest_city(lat: float, lon: float, max_km: float = _SNAP_KM) -> Optional[str]:
+    """Nearest known city to a coordinate, or None if none is within max_km.
+    A linear scan over ~170 cities — microseconds, not worth indexing."""
+    best_name, best_km = None, float("inf")
+    for name, clat, clon in INDIAN_CITIES:
+        km = _haversine_km(lat, lon, clat, clon)
+        if km < best_km:
+            best_name, best_km = name, km
+    return best_name if best_km <= max_km else None
+
+
+def _clean_name(name: Optional[str]) -> Optional[str]:
+    """DB-IP annotates some places with a district in parentheses
+    ("Navi Mumbai (Ghansoli)") — keep just the leading name."""
+    if not name:
+        return None
+    return name.split(" (")[0].strip() or None
+
+
+# name.lower() -> canonical name, for "is DB-IP already telling us a real city?"
+_CITY_BY_NAME = {name.lower(): name for name, _, _ in INDIAN_CITIES}
+
+
 def city_from_ip(ip: Optional[str]) -> Optional[str]:
-    """Best-effort city name for a public IP, else None. Never raises."""
+    """Best-effort city name for a public IP, else None. Never raises.
+
+    Resolution order:
+      1. DB-IP's own label, if it already names a city we know ("Navi Mumbai
+         (Ghansoli)" -> "Navi Mumbai"). Trusting it beats snapping, because
+         nearest-centroid is ambiguous between adjacent metros (Ghansoli sits
+         marginally closer to Thane's centre than Navi Mumbai's).
+      2. Otherwise snap the (accurate) coordinates to the nearest known city —
+         this is what turns "Defence Colony"/"Hashtsāl" into "Delhi".
+      3. Otherwise DB-IP's raw label — a rough name beats nothing (small towns,
+         non-Indian IPs).
+    """
     if not ip:
         return None
     try:
@@ -140,13 +194,24 @@ def city_from_ip(ip: Optional[str]) -> Optional[str]:
     if reader is None:
         return None
     try:
-        name = reader.city(ip).city.name
+        resp = reader.city(ip)
     except (geoip2.errors.AddressNotFoundError, ValueError):
         return None
     except Exception:
         return None
-    if not name:
-        return None
-    # DB-IP annotates some cities with a district in parentheses
-    # ("Navi Mumbai (Ghansoli)") — keep just the city.
-    return name.split(" (")[0].strip() or None
+
+    label = _clean_name(resp.city.name)
+
+    # 1. DB-IP already named a city we know → trust it.
+    if label and label.lower() in _CITY_BY_NAME:
+        return _CITY_BY_NAME[label.lower()]
+
+    # 2. It named a neighbourhood (or nothing) → snap the coordinates.
+    lat, lon = resp.location.latitude, resp.location.longitude
+    if lat is not None and lon is not None:
+        snapped = nearest_city(lat, lon)
+        if snapped:
+            return snapped
+
+    # 3. Nothing close (small town / abroad) → keep the raw label.
+    return label

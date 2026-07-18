@@ -1,11 +1,10 @@
 """Photo validation for Hero Destini.
 
 The uploaded photo must contain a CHILD together with a PARENT. We use a Groq
-vision model via LangChain with **structured output** to extract, in one call:
-  - whether it's a real, appropriate, clear photo of two people
-  - each person's estimated age and gender
-From that we derive the parent/child roles (father/mother, son/daughter) and
-confirm the parent-child relationship via the age gap.
+vision model via LangChain with **structured output** to confirm, in one call,
+that it's a real, appropriate, clear photo of two people (one adult + one child,
+with a plausible age gap). It does NOT derive gender or roles — the user picks
+the parent/child roles on the form; validation only issues the token.
 """
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
@@ -15,6 +14,7 @@ from typing import Optional
 import base64
 import io
 import json
+import re
 import hmac
 import hashlib
 import time
@@ -71,8 +71,6 @@ class PhotoAnalysis(BaseModel):
     number_of_people: int = Field(description="Count of distinct human faces clearly visible")
     parent_present: bool = Field(description="True if an adult (likely a parent) is present")
     child_present: bool = Field(description="True if a child/minor is present")
-    parent_gender: str = Field(description="Gender of the adult/parent: male, female or unknown")
-    child_gender: str = Field(description="Gender of the child: male, female or unknown")
     parent_estimated_age: int = Field(description="Best estimate of the adult's age in years")
     child_estimated_age: int = Field(description="Best estimate of the child's age in years")
     quality_ok: bool = Field(description="True if the photo is clear, well-lit and sharp (not blurry/dark)")
@@ -87,8 +85,6 @@ _SCHEMA_HINT = (
     '  "number_of_people": integer,\n'
     '  "parent_present": boolean,\n'
     '  "child_present": boolean,\n'
-    '  "parent_gender": "male" | "female" | "unknown",\n'
-    '  "child_gender": "male" | "female" | "unknown",\n'
     '  "parent_estimated_age": integer,\n'
     '  "child_estimated_age": integer,\n'
     '  "quality_ok": boolean,\n'
@@ -99,8 +95,13 @@ _SCHEMA_HINT = (
 
 
 def _parse_json(content: str) -> dict:
-    """Extract a JSON object from the model's reply (tolerant of fences / wrappers)."""
+    """Extract a JSON object from the model's reply (tolerant of fences / wrappers).
+
+    Reasoning models (e.g. Groq's qwen) prepend a <think>...</think> block that
+    can itself contain braces, so strip it before hunting for the JSON.
+    """
     s = (content or "").strip()
+    s = re.sub(r"<think>.*?</think>", "", s, flags=re.DOTALL).strip()
     if s.startswith("```"):
         s = s.strip("`")
     a, b = s.find("{"), s.rfind("}")
@@ -119,11 +120,8 @@ class ValidationResponse(BaseModel):
     reason: Optional[str] = None
     message: Optional[str] = None
     label: Optional[str] = None
-    # Derived from the structured analysis:
-    parent_role: Optional[str] = None      # father | mother
-    child_role: Optional[str] = None       # son | daughter
-    parent_gender: Optional[str] = None
-    child_gender: Optional[str] = None
+    # Roles/gender are NOT returned — the user picks parent/child roles on the
+    # form. Validation only confirms it's a real, clear parent+child photo.
     parent_age: Optional[int] = None
     child_age: Optional[int] = None
     age_gap: Optional[int] = None
@@ -173,18 +171,19 @@ def to_data_url(file_bytes: bytes, mime_type: str) -> str:
     return f"data:{mime_type};base64,{base64.b64encode(file_bytes).decode('utf-8')}"
 
 
-# ── LangChain call — JSON-object mode + Pydantic coercion ────────────────
+# ── LangChain call — prompt-guided JSON + Pydantic coercion ───────────────
 # We avoid tool/function-calling strict validation because some models emit values
-# as strings ("35", "true"); JSON mode + Pydantic coercion handles that instead.
+# as strings ("35", "true"); the tolerant _parse_json + Pydantic coercion handle
+# that instead. Groq's json_object mode is NOT used: it's incompatible with
+# reasoning models (e.g. qwen), which emit a <think> block before the JSON — the
+# prompt asks for JSON and _parse_json strips the reasoning. The token budget is
+# generous so a reasoning model has room to think AND emit the JSON.
 # The provider is chosen from the active vision_config row; keys come from .env.
 def _build_vision_llm(provider: str, model_name: str, api_key: Optional[str]):
     p = (provider or "groq").lower()
     if p == "groq":
         from langchain_groq import ChatGroq
-        return ChatGroq(
-            model=model_name, api_key=api_key, temperature=0, max_tokens=1024,
-            model_kwargs={"response_format": {"type": "json_object"}},
-        )
+        return ChatGroq(model=model_name, api_key=api_key, temperature=0, max_tokens=4096)
     if p == "openai":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
@@ -260,22 +259,7 @@ def decide(a: PhotoAnalysis, age_gap: int) -> tuple[bool, str]:
     return True, "APPROVED"
 
 
-PARENT_ROLE_BY_GENDER = {"male": "father", "female": "mother"}
-CHILD_ROLE_BY_GENDER = {"male": "son", "female": "daughter"}
-
-
-def _norm_gender(g: Optional[str]) -> str:
-    g = (g or "").strip().lower()
-    if g in ("male", "man", "boy", "m", "father", "son"):
-        return "male"
-    if g in ("female", "woman", "girl", "f", "mother", "daughter"):
-        return "female"
-    return "unknown"
-
-
 def build_result(resized_bytes: bytes, a: PhotoAnalysis) -> dict:
-    parent_gender = _norm_gender(a.parent_gender)
-    child_gender = _norm_gender(a.child_gender)
     age_gap = abs((a.parent_estimated_age or 0) - (a.child_estimated_age or 0))
     valid, label = decide(a, age_gap)
 
@@ -299,13 +283,9 @@ def build_result(resized_bytes: bytes, a: PhotoAnalysis) -> dict:
         "label": label,
         "reason": None if valid else message,
         "message": message,
-        "parent_gender": parent_gender,
-        "child_gender": child_gender,
         "parent_age": a.parent_estimated_age,
         "child_age": a.child_estimated_age,
         "age_gap": age_gap,
-        "parent_role": PARENT_ROLE_BY_GENDER.get(parent_gender) if valid else None,
-        "child_role": CHILD_ROLE_BY_GENDER.get(child_gender) if valid else None,
         "analysis": a.model_dump(),
     }
     if valid:
@@ -315,7 +295,7 @@ def build_result(resized_bytes: bytes, a: PhotoAnalysis) -> dict:
 
 @router.post("/check_photo", response_model=ValidationResponse)
 async def check_photo(photo: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Validate a combined child+parent photo and return the derived roles/genders."""
+    """Validate a combined child+parent photo (no gender/role) and issue a token."""
     if not photo.content_type or not photo.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
 

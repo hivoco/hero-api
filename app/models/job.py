@@ -46,11 +46,11 @@ class Job(Base):
     # Story inputs (collected on the form)
     child_name = Column(String(120), nullable=True)   # not collected on the form → always NULL
     parent_name = Column(String(120), nullable=False)
-    # Roles are derived from the validated selfie, so they're NULL exactly when
-    # the photo wasn't validated (admin had photo validation OFF at submit) — that
-    # NULL is what makes such a job "unverified" once OTP is verified. Keep this
-    # invariant (validated ⟺ roles set); if roles ever become user-entered while
-    # validation is off, reintroduce an explicit flag instead.
+    # Roles are picked by the user on the details form (Father/Mother,
+    # Daughter/Son) — not derived from the photo. They're nullable only for
+    # historical rows; new submits always set them. Whether the photo was
+    # validated is tracked separately (the admin photo-validation flag + token),
+    # so it drives the "unverified" status, not these columns.
     parent_role = Column(Enum(*PARENT_ROLES, name="parent_role_enum"), nullable=True)
     child_role = Column(Enum(*CHILD_ROLES, name="child_role_enum"), nullable=True)
     # The chosen story slug (a plain varchar in the DB; validated against STORIES).

@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 from uuid import uuid4
 from datetime import timedelta
 
@@ -56,20 +57,17 @@ def _clean_number(mobile_number: str) -> str:
     return n
 
 
-def _validate_inputs(parent_name, parent_role, child_role, story, require_roles=True):
+def _validate_inputs(parent_name, parent_role, child_role):
     if not parent_name or not parent_name.strip():
         raise HTTPException(status_code=400, detail="Parent name is required.")
-    # Roles are derived from the validated photo. They're required on the normal
-    # path; when photo validation is off (require_roles=False) they may be blank,
-    # but if supplied they must still be valid enum values.
-    if require_roles or parent_role:
-        if parent_role not in PARENT_ROLES:
-            raise HTTPException(status_code=400, detail=f"Invalid parent_role. Must be one of: {', '.join(PARENT_ROLES)}")
-    if require_roles or child_role:
-        if child_role not in CHILD_ROLES:
-            raise HTTPException(status_code=400, detail=f"Invalid child_role. Must be one of: {', '.join(CHILD_ROLES)}")
-    if story not in STORIES:
-        raise HTTPException(status_code=400, detail=f"Invalid story. Must be one of: {', '.join(STORIES)}")
+    # Roles are now picked by the user on the form (not derived from the photo),
+    # so they're always required and must be valid enum values.
+    if parent_role not in PARENT_ROLES:
+        raise HTTPException(status_code=400, detail=f"Invalid parent_role. Must be one of: {', '.join(PARENT_ROLES)}")
+    if child_role not in CHILD_ROLES:
+        raise HTTPException(status_code=400, detail=f"Invalid child_role. Must be one of: {', '.join(CHILD_ROLES)}")
+    # The story is no longer user-chosen — it's assigned at random per job
+    # (see submit), so there's nothing to validate here.
 
 
 def _upload_selfie(photo: UploadFile, user_id: str, job_id: int) -> str:
@@ -102,7 +100,6 @@ async def submit_video_form(
     parent_name: str = Form(...),
     parent_role: str = Form(""),
     child_role: str = Form(""),
-    story: str = Form(...),
     language: str = Form("English"),
     city: str = Form(""),
     consent_accepted: bool = Form(...),
@@ -138,13 +135,14 @@ async def submit_video_form(
     # ── Field validation ─────────────────────────────────────────────
     if not mobile_number or len(mobile_number.strip()) < 10:
         raise HTTPException(status_code=400, detail="Invalid mobile number. Please provide a valid 10-digit number.")
-    _validate_inputs(parent_name, parent_role, child_role, story,
-                     require_roles=photo_validation_on)
-    # Blank roles (validation off) persist as NULL rather than "".
+    _validate_inputs(parent_name, parent_role, child_role)
+    # Roles come from the form now, so they're always set.
     parent_role_val = parent_role or None
     child_role_val = child_role or None
     # child_name isn't collected on the form → persist as NULL.
     child_name_val = child_name.strip() or None
+    # Story is not user-chosen — every job gets a random one from the 8 slugs.
+    story_val = random.choice(STORIES)
     if not consent_accepted:
         raise HTTPException(status_code=400, detail="You must accept the consent terms to continue.")
     if not photo.filename:
@@ -201,7 +199,7 @@ async def submit_video_form(
             parent_name=parent_name.strip(),
             parent_role=parent_role_val,
             child_role=child_role_val,
-            story=story,
+            story=story_val,
             language=(language or "english").strip(),
             city=resolved_city,
             status=status,
