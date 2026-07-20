@@ -47,15 +47,10 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         print(f"  [FAIL] S3        - {e}")
 
-    if not settings.WHATSAPP_ENABLED:
-        print(f"  [SKIP] WhatsApp  (disabled — dev OTP is fixed: {settings.DEV_OTP})")
+    if settings.YELLOW_API_KEY and settings.YELLOW_BOT_ID:
+        print(f"  [OK]   WhatsApp  (Yellow.ai bot {settings.YELLOW_BOT_ID}, sender {settings.YELLOW_SENDER})")
     else:
-        try:
-            import httpx
-            resp = httpx.get(settings.WHATSAPP_API_URL, headers={"X-API-KEY": settings.WHATSAPP_API_KEY}, timeout=5.0)
-            print(f"  [OK]   WhatsApp  (status {resp.status_code})")
-        except Exception as e:
-            print(f"  [FAIL] WhatsApp  - {e}")
+        print("  [FAIL] WhatsApp  - Yellow.ai not configured (set YELLOW_* in .env)")
 
     # Seed a default pipeline config so jobs can snapshot a config_id out of the box
     try:
@@ -143,6 +138,7 @@ app.include_router(video.router)
 app.include_router(auth.router)
 app.include_router(photo_validation.router)
 app.include_router(jobs.router)
+app.include_router(jobs.public_router)  # no-auth endpoints (e.g. send-video)
 app.include_router(config.router)
 app.include_router(vision.router)
 app.include_router(settings_router.router)

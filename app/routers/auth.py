@@ -87,7 +87,7 @@ def verify_otp(payload: dict, db: Session = Depends(get_db)):
         Cache.set_pending_video(user.id, str(waiting_job.id))
         print(f"✅ Job {waiting_job.id} status changed: wait → {next_status}")
         try:
-            send_thank_you(mobile_number)
+            send_thank_you(mobile_number, waiting_job.parent_name)
         except Exception as e:
             logger.warning("Failed to send thank you message: %s", str(e))
 
@@ -95,8 +95,9 @@ def verify_otp(payload: dict, db: Session = Depends(get_db)):
                 "message": "OTP verified. Your video is now queued for processing."}
 
     db.commit()
+    latest_job = db.query(Job).filter(Job.user_id == user.id).order_by(Job.id.desc()).first()
     try:
-        send_thank_you(mobile_number)
+        send_thank_you(mobile_number, latest_job.parent_name if latest_job else "")
     except Exception as e:
         logger.warning("Failed to send thank you message: %s", str(e))
     return {"status": "verified", "message": "OTP verified successfully."}
@@ -125,21 +126,36 @@ def resend_otp(payload: dict, db: Session = Depends(get_db)):
     if verification and verification.is_verified:
         raise HTTPException(status_code=400, detail="User is already verified. No OTP needed.")
 
-    existing_otp = (
+    now = get_ist_now()
+
+    # Enforce the resend cooldown: a fresh OTP can only be requested once the
+    # most recent one is OTP_RESEND_COOLDOWN_MINUTES old.
+    latest_otp = (
         db.query(UserOTP)
-        .filter(UserOTP.user_id == user.id, UserOTP.is_used == False,  # noqa: E712
-                UserOTP.expires_at > get_ist_now())
+        .filter(UserOTP.user_id == user.id, UserOTP.is_used == False)  # noqa: E712
         .order_by(UserOTP.created_at.desc())
         .first()
     )
-    if existing_otp:
-        remaining = (existing_otp.expires_at - get_ist_now()).total_seconds()
-        raise HTTPException(status_code=400, detail=f"OTP is still valid. Please wait {int(remaining)} seconds before requesting a new one.")
+    if latest_otp:
+        cooldown = settings.OTP_RESEND_COOLDOWN_MINUTES * 60
+        # created_at comes back from MySQL as naive; get_ist_now() is tz-aware.
+        # Both are IST wall-clock, so compare with tzinfo stripped.
+        age = (now.replace(tzinfo=None) - latest_otp.created_at.replace(tzinfo=None)).total_seconds()
+        if age < cooldown:
+            wait = int(cooldown - age)
+            raise HTTPException(status_code=400,
+                                detail=f"Please wait {wait} seconds before requesting a new OTP.",
+                                headers={"Retry-After": str(wait)})
+
+    # Invalidate every outstanding OTP so the previous code can no longer verify.
+    db.query(UserOTP).filter(
+        UserOTP.user_id == user.id, UserOTP.is_used == False,  # noqa: E712
+    ).update({"is_used": True, "used_at": now})
 
     otp = generate_otp()
-    logger.info("RESEND OTP for %s: %s", mobile_number, otp)
+    logger.info("OTP resent for user %s", user.id)
     db.add(UserOTP(id=str(uuid4()), user_id=user.id, otp_hash=hash_otp(otp),
-                   expires_at=get_ist_now() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
+                   expires_at=now + timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
                    attempts=0, is_used=False))
     db.commit()
 

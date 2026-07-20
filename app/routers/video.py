@@ -216,7 +216,7 @@ async def submit_video_form(
         existing_job = db.query(Job).filter(Job.user_id == user.id, Job.status == "wait").first()
         if existing_job:
             otp = generate_otp()
-            logger.info("OTP for %s: %s", mobile_number, otp)
+            logger.info("OTP issued for user %s", user.id)
             db.add(UserOTP(id=str(uuid4()), user_id=user.id, otp_hash=hash_otp(otp),
                            expires_at=get_ist_now() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
                            attempts=0, is_used=False))
@@ -232,7 +232,7 @@ async def submit_video_form(
             db.add(JobAssets(job_id=job.id, selfie_url=url))
 
             otp = generate_otp()
-            logger.info("OTP for %s: %s", mobile_number, otp)
+            logger.info("OTP issued for user %s", user.id)
             db.add(UserOTP(id=str(uuid4()), user_id=user.id, otp_hash=hash_otp(otp),
                            expires_at=get_ist_now() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
                            attempts=0, is_used=False))
@@ -281,7 +281,7 @@ async def submit_video_form(
 
         Cache.set_pending_video(user.id, str(job.id))
         try:
-            send_thank_you(mobile_number)
+            send_thank_you(mobile_number, job.parent_name)
         except Exception as e:
             logger.warning("Failed to send thank you message: %s", str(e))
 

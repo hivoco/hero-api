@@ -72,6 +72,23 @@ def activate_vision(db: Session, config_id: int) -> Optional[VisionConfig]:
     return target
 
 
+def delete_vision(db: Session, config_id: int) -> str:
+    """Delete an inactive vision_config row.
+
+    Returns "ok" on success, "not_found" if the row doesn't exist, or "active"
+    if it's the currently-active config (which must not be deleted — activate a
+    different version first).
+    """
+    target = db.query(VisionConfig).filter(VisionConfig.id == config_id).first()
+    if not target:
+        return "not_found"
+    if target.status == 1:
+        return "active"
+    db.delete(target)
+    db.commit()
+    return "ok"
+
+
 def create_and_activate_vision(db: Session, provider: str, model_name: str,
                                prompt: str, changed_by: str) -> VisionConfig:
     """Insert a new active vision row and deactivate all previous rows (atomic)."""

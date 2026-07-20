@@ -12,7 +12,8 @@ from app.core.database import get_db
 from app.core.admin_auth import get_current_admin, require_superadmin
 from app.models.vision_config import VisionConfig
 from app.services.vision_service import (
-    get_active_vision, create_and_activate_vision, activate_vision, ALLOWED_VISION_PROVIDERS,
+    get_active_vision, create_and_activate_vision, activate_vision, delete_vision,
+    ALLOWED_VISION_PROVIDERS,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["vision-config"])
@@ -59,6 +60,22 @@ def vision_activate(config_id: int, db: Session = Depends(get_db),
     if not vc:
         raise HTTPException(status_code=404, detail=f"Vision config {config_id} not found")
     return {"success": True, "message": f"Vision config v{vc.id} activated", "vision": _serialize(vc)}
+
+
+@router.delete("/vision/{config_id}")
+def vision_delete(config_id: int, db: Session = Depends(get_db),
+                  admin: str = Depends(require_superadmin)):
+    """Delete an inactive vision config row (super-admin only). The active
+    config cannot be deleted — activate another version first."""
+    result = delete_vision(db, config_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail=f"Vision config {config_id} not found")
+    if result == "active":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete the active vision config. Activate another version first.",
+        )
+    return {"success": True, "message": f"Vision config v{config_id} deleted"}
 
 
 @router.post("/change/prompt/vision")

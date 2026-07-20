@@ -12,6 +12,9 @@ class Settings(BaseSettings):
 
     # OTP
     OTP_EXPIRY_MINUTES: int = 5
+    # Minutes a user must wait before requesting a fresh OTP. On resend the
+    # previous code is invalidated. Keep the frontend countdown in sync.
+    OTP_RESEND_COOLDOWN_MINUTES: int = 4
 
     # AWS / S3
     AWS_REGION: str
@@ -34,19 +37,16 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: Optional[str] = None
     REDIS_DB: int = 0
 
-    # WhatsApp (MessagingHub) API
-    WHATSAPP_API_URL: str
-    WHATSAPP_API_KEY: str
-    # Dev switch: when False, NO WhatsApp API call is made and every OTP is the
-    # fixed DEV_OTP below. Flip to True once a real WhatsApp account is wired up.
-    WHATSAPP_ENABLED: bool = False
-    DEV_OTP: str = "000000"
-    # Template names registered on the WhatsApp Business account.
-    # Override these to match the templates approved for Hero Destini.
-    WHATSAPP_OTP_TEMPLATE: str = "hero_otp"
-    WHATSAPP_THANKYOU_TEMPLATE: str = "hero_thank_you"
-    WHATSAPP_FAILED_TEMPLATE: str = "hero_failed"
-    WHATSAPP_VIDEO_TEMPLATE: str = "hero_video"
+    # WhatsApp via Yellow.ai engagements API (all secrets live in .env)
+    YELLOW_API_URL: str = "https://cloud.yellow.ai/api/engagements/notifications/v2/push"
+    YELLOW_BOT_ID: str
+    YELLOW_API_KEY: str
+    YELLOW_SENDER: str
+    # Approved Yellow.ai WhatsApp template IDs.
+    YELLOW_OTP_TEMPLATE: str = "otp_message_v1"
+    YELLOW_CONFIRM_TEMPLATE: str = "destini_tech_act_wait_v1"
+    YELLOW_FAILED_TEMPLATE: str = "failed_message"
+    YELLOW_VIDEO_TEMPLATE: str = "destini_tech_act_video_v1"
 
     # App environment (development / production)
     APP_ENV: str = "development"

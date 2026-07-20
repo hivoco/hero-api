@@ -10,9 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def generate_otp() -> str:
-    # Dev mode (no WhatsApp): always issue the fixed OTP so testers can verify.
-    if not settings.WHATSAPP_ENABLED:
-        return settings.DEV_OTP
+    """Generate a real random 6-digit OTP."""
     return str(secrets.randbelow(900000) + 100000)
 
 
@@ -21,116 +19,84 @@ def hash_otp(otp: str) -> str:
 
 
 def _format_phone(mobile_number: str) -> str:
-    """Ensure the phone number carries the 91 country prefix for WhatsApp."""
+    """Normalise to the 10-digit number Yellow.ai expects (no country code)."""
     phone = mobile_number.strip().replace("+", "").replace(" ", "").replace("-", "")
-    if len(phone) == 10:
-        phone = "91" + phone
-    elif len(phone) == 12 and phone.startswith("91"):
-        pass  # already formatted
+    if phone.startswith("91") and len(phone) == 12:
+        phone = phone[2:]
+    elif phone.startswith("0") and len(phone) == 11:
+        phone = phone[1:]
     return phone
 
 
-def _send_template(phone: str, payload: dict, label: str) -> bool:
-    # WhatsApp disabled (no account yet): skip the API call entirely.
-    if not settings.WHATSAPP_ENABLED:
-        logger.info("[DEV] WhatsApp disabled — skipping %s to %s (OTP is fixed: %s)",
-                    label, phone, settings.DEV_OTP)
-        return True
+def _send_yellow(mobile_number: str, template_id: str, params: dict, label: str) -> bool:
+    """Push a WhatsApp template notification through the Yellow.ai engagements API."""
+    if not template_id:
+        logger.warning("Yellow.ai %s skipped — no template configured", label)
+        return False
+
+    phone = _format_phone(mobile_number)
+    notification = {
+        "type": "whatsapp",
+        "sender": settings.YELLOW_SENDER,
+        "templateId": template_id,
+    }
+    # Some templates (e.g. the failed-message one) take no params — omit the key
+    # entirely rather than sending an empty object.
+    if params:
+        notification["params"] = params
+    payload = {"userDetails": {"number": phone}, "notification": notification}
     try:
         response = httpx.post(
-            settings.WHATSAPP_API_URL,
+            settings.YELLOW_API_URL,
+            params={"bot": settings.YELLOW_BOT_ID},
             json=payload,
             headers={
-                "X-API-KEY": settings.WHATSAPP_API_KEY,
+                "x-api-key": settings.YELLOW_API_KEY,
                 "Content-Type": "application/json",
             },
             timeout=10.0,
         )
-        logger.info("WhatsApp %s response [%s]: %s", label, response.status_code, response.text)
-        if response.status_code in (200, 201):
+        logger.info("Yellow.ai %s response [%s]: %s", label, response.status_code, response.text)
+        # Yellow.ai's push API returns 202 Accepted ({"msgId": ...}) on success,
+        # so accept any 2xx — not just 200/201.
+        if 200 <= response.status_code < 300:
             return True
-        logger.warning("WhatsApp %s failed [%s]: %s", label, response.status_code, response.text)
+        logger.warning("Yellow.ai %s failed [%s]: %s", label, response.status_code, response.text)
         return False
     except Exception as e:
-        logger.error("WhatsApp %s error: %s", label, str(e))
+        logger.error("Yellow.ai %s error: %s", label, str(e))
         return False
 
 
 def send_otp(mobile_number: str, otp: str) -> bool:
-    """Send the OTP to the user via WhatsApp (template with code body + copy-code button)."""
-    phone = _format_phone(mobile_number)
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone,
-        "type": "template",
-        "template": {
-            "name": settings.WHATSAPP_OTP_TEMPLATE,
-            "language": {"code": "en"},
-            "components": [
-                {
-                    "type": "body",
-                    "parameters": [{"type": "text", "text": otp}],
-                },
-                {
-                    "type": "button",
-                    "sub_type": "url",
-                    "index": 0,
-                    "parameters": [{"type": "text", "text": otp}],
-                },
-            ],
-        },
-    }
-    return _send_template(phone, payload, "OTP")
+    """Send the OTP to the user via WhatsApp (Yellow.ai template `otp_message_v1`)."""
+    return _send_yellow(mobile_number, settings.YELLOW_OTP_TEMPLATE, {"1": otp}, "OTP")
 
 
-def send_thank_you(mobile_number: str) -> bool:
-    """Send the confirmation/thank-you message once the request is accepted."""
-    phone = _format_phone(mobile_number)
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone,
-        "type": "template",
-        "template": {
-            "name": settings.WHATSAPP_THANKYOU_TEMPLATE,
-            "language": {"code": "en"},
-        },
-    }
-    return _send_template(phone, payload, "thank_you")
+def send_thank_you(mobile_number: str, parent_name: str = "") -> bool:
+    """Send the confirmation message once an entry is submitted and OTP-verified
+    (Yellow.ai template `destini_tech_act_wait_v1`, param 1 = parent name)."""
+    return _send_yellow(
+        mobile_number,
+        settings.YELLOW_CONFIRM_TEMPLATE,
+        {"1": parent_name or "there"},
+        "confirmation",
+    )
 
 
 def send_failed_message(mobile_number: str) -> bool:
-    """Notify the user when video generation has failed."""
-    phone = _format_phone(mobile_number)
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone,
-        "type": "template",
-        "template": {
-            "name": settings.WHATSAPP_FAILED_TEMPLATE,
-            "language": {"code": "en"},
-        },
-    }
-    return _send_template(phone, payload, "failed")
+    """Notify the user when video generation has failed (Yellow.ai template
+    `failed_message` — takes no params)."""
+    return _send_yellow(mobile_number, settings.YELLOW_FAILED_TEMPLATE, {}, "failed")
 
 
-def send_video(mobile_number: str, video_url: str) -> bool:
-    """Deliver the finished video to the user via a WhatsApp video-header template."""
-    phone = _format_phone(mobile_number)
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone,
-        "type": "template",
-        "template": {
-            "name": settings.WHATSAPP_VIDEO_TEMPLATE,
-            "language": {"code": "en"},
-            "components": [
-                {
-                    "type": "header",
-                    "parameters": [
-                        {"type": "video", "video": {"link": video_url}}
-                    ],
-                }
-            ],
-        },
-    }
-    return _send_template(phone, payload, "video")
+def send_video(mobile_number: str, video_url: str, parent_name: str = "") -> bool:
+    """Deliver the finished video via the Yellow.ai media template
+    `destini_tech_act_video_v1` (media.mediaLink = the S3 video URL,
+    param 1 = parent name)."""
+    return _send_yellow(
+        mobile_number,
+        settings.YELLOW_VIDEO_TEMPLATE,
+        {"media": {"mediaLink": video_url}, "1": parent_name or "there"},
+        "video",
+    )

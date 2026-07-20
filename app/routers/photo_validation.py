@@ -120,11 +120,8 @@ class ValidationResponse(BaseModel):
     reason: Optional[str] = None
     message: Optional[str] = None
     label: Optional[str] = None
-    # Roles/gender are NOT returned — the user picks parent/child roles on the
-    # form. Validation only confirms it's a real, clear parent+child photo.
-    parent_age: Optional[int] = None
-    child_age: Optional[int] = None
-    age_gap: Optional[int] = None
+    # Roles/gender and ages are NOT returned — the user picks parent/child roles
+    # on the form. Validation only confirms it's a real, clear parent+child photo.
     analysis: Optional[dict] = None
     validation_token: Optional[str] = None
 
@@ -209,6 +206,29 @@ def _keys_for_provider(provider: str) -> list:
     return [None]
 
 
+def _content_to_text(content) -> str:
+    """Flatten an LLM reply to plain text.
+
+    Groq/OpenAI return a plain string, but langchain_google_genai (Gemini)
+    returns a LIST of content blocks — e.g. [{"type": "text", "text": "{...}"}].
+    str()-ing that list yields a Python repr (single quotes) that _parse_json
+    can't read, so pull the text out of each block instead.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if text:
+                    parts.append(text)
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts)
+    return str(content)
+
+
 def _analyze_with_key(data_url: str, provider: str, model_name: str, prompt: str, api_key: Optional[str]) -> PhotoAnalysis:
     llm = _build_vision_llm(provider, model_name, api_key)
     messages = [
@@ -219,7 +239,7 @@ def _analyze_with_key(data_url: str, provider: str, model_name: str, prompt: str
         ]),
     ]
     resp = llm.invoke(messages)
-    content = resp.content if isinstance(resp.content, str) else str(resp.content)
+    content = _content_to_text(resp.content)
     return PhotoAnalysis.model_validate(_parse_json(content))
 
 
@@ -272,21 +292,21 @@ def build_result(resized_bytes: bytes, a: PhotoAnalysis) -> dict:
         message = (f"We found only {a.number_of_people} person. The photo must have exactly two — "
                    f"one child and one parent together.")
     elif label == "REJECT_AGE_GAP":
-        message = (f"The two people look too close in age (adult ~{a.parent_estimated_age}, "
-                   f"child ~{a.child_estimated_age}, gap {age_gap}y) to be a parent and child. "
-                   f"Please upload a photo of the child with a parent.")
+        message = ("The two people look too close in age to be a parent and child. "
+                   "Please upload a photo of the child with a parent.")
     elif label == "REJECT_NOT_PARENT_CHILD":
         message = "We couldn't identify one adult and one child. Please upload one photo with the child and a parent."
 
+    # Ages are used internally for the decision above but never returned — the
+    # response must not reveal any person's age.
+    analysis = {k: v for k, v in a.model_dump().items()
+                if k not in ("parent_estimated_age", "child_estimated_age")}
     result = {
         "valid": valid,
         "label": label,
         "reason": None if valid else message,
         "message": message,
-        "parent_age": a.parent_estimated_age,
-        "child_age": a.child_estimated_age,
-        "age_gap": age_gap,
-        "analysis": a.model_dump(),
+        "analysis": analysis,
     }
     if valid:
         result["validation_token"] = generate_validation_token(hashlib.sha256(resized_bytes).hexdigest())

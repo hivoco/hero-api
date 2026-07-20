@@ -27,6 +27,10 @@ router = APIRouter(
     dependencies=[Depends(get_current_admin)],
 )
 
+# Same prefix, but WITHOUT the admin-auth dependency — for endpoints that must be
+# callable without a token (e.g. the video-send API triggered by other systems).
+public_router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+
 
 # ── Response models ───────────────────────────────────────────────────
 class JobResponse(BaseModel):
@@ -380,30 +384,56 @@ def update_video_url(job_id: int, body: UpdateVideoUrlRequest, db: Session = Dep
 
 
 # ── Send video via WhatsApp ───────────────────────────────────────────
-@router.post("/{job_id}/send-video")
-def send_video_whatsapp(job_id: int, db: Session = Depends(get_db)):
+class SendVideoRequest(BaseModel):
+    # S3 URL of the final video to deliver. Optional: when omitted, the job's
+    # stored final_video_url is used instead.
+    video_url: Optional[str] = None
+
+
+@public_router.post("/{job_id}/send-video")
+def send_video_whatsapp(job_id: int, body: Optional[SendVideoRequest] = None,
+                        db: Session = Depends(get_db)):
+    """Send the finished video to the WhatsApp number attached to this job.
+
+    No auth — this endpoint is on the public jobs router so external systems can
+    trigger delivery with just the job id (and optionally the S3 URL).
+
+    Pass the S3 URL in the body (`{"video_url": "https://…mp4"}`); if omitted it
+    falls back to the job's stored final_video_url. The number is resolved from
+    the job's user — the caller only supplies the job id (and optionally the URL).
+    """
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
     assets = db.query(JobAssets).filter(JobAssets.job_id == job_id).first()
-    if not assets or not assets.final_video_url:
-        raise HTTPException(status_code=400, detail="Final video is not available yet for this job")
+    video_url = (body.video_url.strip() if body and body.video_url else "") or \
+        (assets.final_video_url if assets else "")
+    if not video_url:
+        raise HTTPException(status_code=400,
+                            detail="No video URL provided and no final video stored for this job")
 
     user = db.query(User).filter(User.id == job.user_id).first()
     mobile_number = _decrypt(user)
     if not mobile_number or mobile_number == "***ENCRYPTED***":
         raise HTTPException(status_code=400, detail="User phone number not available")
 
-    ok = send_video(mobile_number, assets.final_video_url)
+    ok = send_video(mobile_number, video_url, job.parent_name)
     if not ok:
         raise HTTPException(status_code=502, detail="WhatsApp API failed to send the video")
+
+    # Persist whichever URL we actually sent so the job record matches.
+    if assets:
+        assets.final_video_url = video_url
+    else:
+        db.add(JobAssets(job_id=job_id, final_video_url=video_url))
 
     job.status = "sent"
     job.updated_at = get_ist_now()
     db.commit()
     Cache.clear_pending_video(job.user_id)
-    return {"success": True, "message": f"Video sent via WhatsApp. Job {job_id} marked 'sent'.", "job_id": job_id}
+    return {"success": True, "message": f"Video sent via WhatsApp. Job {job_id} marked 'sent'.",
+            "job_id": job_id, "video_url": video_url}
 
 
 # ── Reports: stats ────────────────────────────────────────────────────
