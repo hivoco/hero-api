@@ -16,7 +16,10 @@ from app.core.timezone import get_ist_now
 from app.core.redis import RateLimiter, Cache, FeatureFlags
 from app.core.geoip import city_from_ip
 from app.routers.photo_validation import verify_validation_token
-from app.services.settings_service import get_max_videos_per_user, get_unlimited_numbers, get_held_numbers
+from app.services.settings_service import (
+    get_max_videos_per_user, get_unlimited_numbers, get_held_numbers,
+    get_allow_multiple_requests,
+)
 
 from app.models.user import User
 from app.models.user_verification import UserVerification
@@ -36,10 +39,11 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
-# TEMP (testing): allow a user to submit as many times as they like — skips both
-# the "one video in flight" guard and the per-user video-count cap. Set back to
-# False (or delete the guards) to restore the normal one-video-per-user limits.
-ALLOW_MULTIPLE_REQUESTS = True
+# `allow_multiple_requests` is an admin-editable runtime setting (read per-request
+# via settings_service, env default ALLOW_MULTIPLE_REQUESTS). When True, a phone
+# number can submit unlimited times — skips both the "one video in flight" guard
+# and the per-user cap. When False, MAX_VIDEOS_PER_USER (whitelist-bypassed) is
+# enforced.
 
 
 def _client_ip(request: Request) -> str | None:
@@ -155,7 +159,7 @@ async def submit_video_form(
     cleaned_number = _clean_number(mobile_number)
     user = db.query(User).filter(User.phone_hash == phone_hash).first()
 
-    if (not ALLOW_MULTIPLE_REQUESTS and user and user.video_count >= get_max_videos_per_user()
+    if (not get_allow_multiple_requests() and user and user.video_count >= get_max_videos_per_user()
             and cleaned_number not in get_unlimited_numbers()):
         raise HTTPException(status_code=403, detail="You have already generated the maximum number of videos.")
 
@@ -248,8 +252,8 @@ async def submit_video_form(
             raise HTTPException(status_code=500, detail=f"Failed to process your request: {str(e)}")
 
     # ── Verified user: reject if a job is still in flight ────────────
-    # (skipped while ALLOW_MULTIPLE_REQUESTS is on, so testing can submit freely)
-    if not ALLOW_MULTIPLE_REQUESTS:
+    # (skipped while allow_multiple_requests is on, so testing can submit freely)
+    if not get_allow_multiple_requests():
         cached_job_id = Cache.get_pending_video(user.id)
         if cached_job_id:
             return {"status": "pending", "job_id": int(cached_job_id),

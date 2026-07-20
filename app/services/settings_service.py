@@ -35,6 +35,7 @@ DEFAULT_HELD_NUMBERS: list[str] = []
 def _defaults() -> dict:
     return {
         "max_videos_per_user": env_settings.MAX_VIDEOS_PER_USER,
+        "allow_multiple_requests": env_settings.ALLOW_MULTIPLE_REQUESTS,
         "unlimited_numbers": list(DEFAULT_UNLIMITED_NUMBERS),
         "held_numbers": list(DEFAULT_HELD_NUMBERS),
     }
@@ -111,6 +112,10 @@ def get_max_videos_per_user() -> int:
         return int(get_settings().get("max_videos_per_user", env_settings.MAX_VIDEOS_PER_USER))
     except (TypeError, ValueError):
         return env_settings.MAX_VIDEOS_PER_USER
+
+
+def get_allow_multiple_requests() -> bool:
+    return bool(get_settings().get("allow_multiple_requests", env_settings.ALLOW_MULTIPLE_REQUESTS))
 
 
 def get_unlimited_numbers() -> set:

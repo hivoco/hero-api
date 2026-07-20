@@ -29,6 +29,7 @@ def _normalize_number(raw: str) -> Optional[str]:
 
 class BackendConfigUpdate(BaseModel):
     max_videos_per_user: Optional[int] = None
+    allow_multiple_requests: Optional[bool] = None
     unlimited_numbers: Optional[List[str]] = None
     held_numbers: Optional[List[str]] = None
 
@@ -52,6 +53,9 @@ def update_backend_config(body: BackendConfigUpdate, admin: str = Depends(requir
         if body.max_videos_per_user < 0 or body.max_videos_per_user > 1000:
             raise HTTPException(status_code=400, detail="max_videos_per_user must be between 0 and 1000")
         patch["max_videos_per_user"] = body.max_videos_per_user
+
+    if body.allow_multiple_requests is not None:
+        patch["allow_multiple_requests"] = body.allow_multiple_requests
 
     if body.unlimited_numbers is not None:
         patch["unlimited_numbers"] = sorted({n for n in (_normalize_number(x) for x in body.unlimited_numbers) if n})

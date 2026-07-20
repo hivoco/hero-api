@@ -56,6 +56,10 @@ class Settings(BaseSettings):
 
     # Max videos a single phone number may generate (whitelist bypasses this)
     MAX_VIDEOS_PER_USER: int = 2
+    # When True, a phone number can submit unlimited times — the per-user cap
+    # (MAX_VIDEOS_PER_USER) AND the "one video in flight" guard are skipped.
+    # Set False to enforce those limits (whitelist still bypasses the cap).
+    ALLOW_MULTIPLE_REQUESTS: bool = True
 
     # Admin auth
     ADMIN_USERNAME: str
