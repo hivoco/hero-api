@@ -111,8 +111,8 @@ app.add_middleware(
         "https://admin.herodestini.in",
         # thefirstimpression.ai deployment — campaign frontend + admin dashboard.
         # (The API's own origin needs no entry; it never calls itself cross-origin.)
-        "http://hero.thefirstimpression.ai",
-        "http://hero-admin-dashboard.thefirstimpression.ai",
+        "https://hero.thefirstimpression.ai",
+        "https://hero-admin-dashboard.thefirstimpression.ai",
         "http://localhost:3000",
         "http://localhost:3001",
     ],
