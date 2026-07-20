@@ -103,26 +103,26 @@ app = FastAPI(
     redoc_url=None if is_production else "/redoc",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://herodestini.in",
-        "https://www.herodestini.in",
-        "https://admin.herodestini.in",
-        # thefirstimpression.ai deployment — campaign frontend + admin dashboard.
-        # (The API's own origin needs no entry; it never calls itself cross-origin.)
-        "https://hero.thefirstimpression.ai",
-        "https://hero-admin-dashboard.thefirstimpression.ai",
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],
-    allow_credentials=True,
-    # Explicitly list every method so the preflight's Access-Control-Allow-Methods
-    # always advertises PATCH/DELETE (some proxies/versions don't expand "*").
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=[
+#         "https://herodestini.in",
+#         "https://www.herodestini.in",
+#         "https://admin.herodestini.in",
+#         # thefirstimpression.ai deployment — campaign frontend + admin dashboard.
+#         # (The API's own origin needs no entry; it never calls itself cross-origin.)
+#         "https://hero.thefirstimpression.ai",
+#         "https://hero-admin-dashboard.thefirstimpression.ai",
+#         "http://localhost:3000",
+#         "http://localhost:3001",
+#     ],
+#     allow_credentials=True,
+#     # Explicitly list every method so the preflight's Access-Control-Allow-Methods
+#     # always advertises PATCH/DELETE (some proxies/versions don't expand "*").
+#     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+#     allow_headers=["*"],
+#     expose_headers=["*"],
+# )
 
 
 @app.get("/")
