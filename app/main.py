@@ -117,8 +117,11 @@ app.add_middleware(
         "http://localhost:3001",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    # Explicitly list every method so the preflight's Access-Control-Allow-Methods
+    # always advertises PATCH/DELETE (some proxies/versions don't expand "*").
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
