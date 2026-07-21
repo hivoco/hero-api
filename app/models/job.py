@@ -29,11 +29,18 @@ LANGUAGES = (
     "tamil", "telugu", "malayalam", "marathi", "gujarati",
 )
 
-# The eight story slugs (must match the frontend `src/lib/stories.ts`). Stored
-# verbatim in jobs.story — that column is the chosen story.
+# The eight story slugs — lowercase, no spaces (must match the video pipeline's
+# story templates). Stored verbatim in jobs.story — that column is the chosen
+# story (assigned at random per job).
 STORIES = (
-    "dragon-eggs", "magical-herb", "golden-crown", "fairy-rescue",
-    "lost-kitten", "tired-dragon", "lost-puppy", "snowman",
+    "savingdragonseggs",    # Saving Dragon's Eggs
+    "thefairyqueenrescue",  # The Fairy Queen Rescue
+    "savethatpuppy",        # Save That Puppy
+    "thesnowmanattack",     # The Snowman Attack
+    "thedragonswayhome",    # The Dragon's Way Home
+    "thelostkitten",        # The Lost Kitten
+    "missiongoldencrown",   # Mission Golden Crown
+    "themagicalherb",       # The Magical Herb
 )
 
 
