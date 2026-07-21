@@ -274,7 +274,7 @@ async def submit_video_form(
     elif cleaned_number in get_held_numbers():
         initial_status = "process_stop"
     else:
-        initial_status = "queued"
+        initial_status = "process_stop"
     try:
         job = build_job(initial_status)
         db.add(job)
