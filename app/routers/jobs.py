@@ -89,8 +89,12 @@ class JobDetailResponse(JobResponse):
     selfie_url: Optional[str] = None
     photo_url_1: Optional[str] = None
     photo_url_2: Optional[str] = None
+    photo_url_3: Optional[str] = None
+    photo_url_4: Optional[str] = None
     video_url_1: Optional[str] = None
     video_url_2: Optional[str] = None
+    video_url_3: Optional[str] = None
+    video_url_4: Optional[str] = None
     audio_url: Optional[str] = None
     final_video_url: Optional[str] = None
     video_count: Optional[int] = None
@@ -244,8 +248,12 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
         "selfie_url": assets.selfie_url if assets else None,
         "photo_url_1": assets.photo_url_1 if assets else None,
         "photo_url_2": assets.photo_url_2 if assets else None,
+        "photo_url_3": assets.photo_url_3 if assets else None,
+        "photo_url_4": assets.photo_url_4 if assets else None,
         "video_url_1": assets.video_url_1 if assets else None,
         "video_url_2": assets.video_url_2 if assets else None,
+        "video_url_3": assets.video_url_3 if assets else None,
+        "video_url_4": assets.video_url_4 if assets else None,
         "audio_url": assets.audio_url if assets else None,
         "final_video_url": assets.final_video_url if assets else None,
     })

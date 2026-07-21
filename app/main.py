@@ -103,6 +103,10 @@ app = FastAPI(
     redoc_url=None if is_production else "/redoc",
 )
 
+# FastAPI is the single source of CORS headers. If a reverse proxy also adds
+# CORS, remove it there (two layers → duplicate Access-Control-Allow-Origin,
+# which browsers reject) — do NOT disable this middleware, or direct/local access
+# (no proxy) loses CORS entirely.
 # app.add_middleware(
 #     CORSMiddleware,
 #     allow_origins=[
@@ -113,8 +117,9 @@ app = FastAPI(
 #         # (The API's own origin needs no entry; it never calls itself cross-origin.)
 #         "https://hero.thefirstimpression.ai",
 #         "https://hero-admin-dashboard.thefirstimpression.ai",
-#         "http://localhost:3000",
-#         "http://localhost:3001",
+#         "http://localhost:3000",   # campaign frontend (dev)
+#         "http://localhost:3001",   # campaign frontend (dev, alt)
+#         "http://localhost:8100",   # admin dashboard (dev)
 #     ],
 #     allow_credentials=True,
 #     # Explicitly list every method so the preflight's Access-Control-Allow-Methods

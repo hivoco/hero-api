@@ -16,7 +16,10 @@ from app.core.database import get_db
 from app.core.admin_auth import get_current_admin, require_superadmin
 from app.core.timezone import get_ist_now
 from app.core.redis import FeatureFlags
-from app.models.pipeline_config import PipelineConfig, PHOTO_PROVIDERS, VIDEO_PROVIDERS
+from app.models.pipeline_config import (
+    PipelineConfig, PHOTO_PROVIDERS, PHOTO_QUALITIES, VIDEO_PROVIDERS,
+    GROK_PROVIDERS, VIDEO_QUALITIES,
+)
 from app.models.config_audit import ConfigAudit
 from app.services.config_service import get_active_config
 
@@ -25,29 +28,37 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/config", tags=["pipeline-config"])
 
 EDITABLE_FIELDS = [
-    "version_label", "photo_provider", "photo_model", "photo_quality", "photo_prompts",
-    "photo_count", "video_provider_1", "video_provider_2", "video_model", "video_quality",
-    "video_prompts", "video_duration_sec", "stitch_pattern", "music_url", "endcard_url",
+    "version_label", "photo_provider", "photo_model", "photo_quality", "photo_size",
+    "photo_prompt", "photo_count", "video_provider", "video_model", "grok_provider",
+    "video_quality", "video_prompts", "video_duration_sec", "video_provider_1",
+    "video_provider_2", "stitch_pattern", "music_url", "endcard_url",
     "max_retry", "stuck_after_minutes", "notes",
 ]
 
 
 class ConfigCreate(BaseModel):
     version_label: Optional[str] = None
+    # Photo stage
     photo_provider: str
     photo_model: str
     photo_quality: str
-    photo_prompts: Dict[str, Any] = {}
-    photo_count: int = 2
-    video_provider_1: str
-    video_provider_2: str
+    photo_size: str = "1440x2560"
+    photo_prompt: str
+    photo_count: int = 3
+    # Video stage
+    video_provider: Optional[str] = None       # enum(kie, segmind)
     video_model: str
+    grok_provider: str = "kie"                  # enum(kie, segmind)
     video_quality: str
     video_prompts: Dict[str, Any] = {}
     video_duration_sec: int = 5
+    video_provider_1: str                       # enum(seedance, kling)
+    video_provider_2: str                       # enum(seedance, kling)
+    # Stitch stage
     stitch_pattern: Dict[str, Any] = {}
     music_url: Optional[str] = None
     endcard_url: Optional[str] = None
+    # Retry / TAT
     max_retry: int = 3
     stuck_after_minutes: int = 15
     notes: Optional[str] = None
@@ -58,11 +69,13 @@ def _serialize(c: PipelineConfig) -> dict:
     return {
         "id": c.id, "is_active": c.is_active, "version_label": c.version_label,
         "photo_provider": c.photo_provider, "photo_model": c.photo_model,
-        "photo_quality": c.photo_quality, "photo_prompts": c.photo_prompts,
-        "photo_count": c.photo_count, "video_provider_1": c.video_provider_1,
-        "video_provider_2": c.video_provider_2, "video_model": c.video_model,
-        "video_quality": c.video_quality, "video_prompts": c.video_prompts,
-        "video_duration_sec": c.video_duration_sec, "stitch_pattern": c.stitch_pattern,
+        "photo_quality": c.photo_quality, "photo_size": c.photo_size,
+        "photo_prompt": c.photo_prompt, "photo_count": c.photo_count,
+        "video_provider": c.video_provider, "video_model": c.video_model,
+        "grok_provider": c.grok_provider, "video_quality": c.video_quality,
+        "video_prompts": c.video_prompts, "video_duration_sec": c.video_duration_sec,
+        "video_provider_1": c.video_provider_1, "video_provider_2": c.video_provider_2,
+        "stitch_pattern": c.stitch_pattern,
         "music_url": c.music_url, "endcard_url": c.endcard_url,
         "max_retry": c.max_retry, "stuck_after_minutes": c.stuck_after_minutes,
         "notes": c.notes, "created_by": c.created_by,
@@ -73,9 +86,17 @@ def _serialize(c: PipelineConfig) -> dict:
 def _validate_providers(body: ConfigCreate):
     if body.photo_provider not in PHOTO_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Invalid photo_provider. Must be one of: {', '.join(PHOTO_PROVIDERS)}")
+    if body.photo_quality not in PHOTO_QUALITIES:
+        raise HTTPException(status_code=400, detail=f"Invalid photo_quality. Must be one of: {', '.join(PHOTO_QUALITIES)}")
     for p in (body.video_provider_1, body.video_provider_2):
         if p not in VIDEO_PROVIDERS:
-            raise HTTPException(status_code=400, detail=f"Invalid video_provider. Must be one of: {', '.join(VIDEO_PROVIDERS)}")
+            raise HTTPException(status_code=400, detail=f"Invalid video provider (1/2). Must be one of: {', '.join(VIDEO_PROVIDERS)}")
+    if body.video_provider is not None and body.video_provider not in GROK_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Invalid video_provider. Must be one of: {', '.join(GROK_PROVIDERS)}")
+    if body.grok_provider not in GROK_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Invalid grok_provider. Must be one of: {', '.join(GROK_PROVIDERS)}")
+    if body.video_quality not in VIDEO_QUALITIES:
+        raise HTTPException(status_code=400, detail=f"Invalid video_quality. Must be one of: {', '.join(VIDEO_QUALITIES)}")
     if body.photo_count < 1 or body.photo_count > 10:
         raise HTTPException(status_code=400, detail="photo_count must be between 1 and 10")
     if body.max_retry < 0 or body.max_retry > 10:
