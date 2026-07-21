@@ -118,6 +118,7 @@ app.add_middleware(
         "https://hero.thefirstimpression.ai",
         "https://hero-admin-dashboard.thefirstimpression.ai",
         "https://destinistory.heromotocorp.com",
+        "https://www.destinistory.heromotocorp.com",
         "http://localhost:3000",   # campaign frontend (dev)
         "http://localhost:3001",   # campaign frontend (dev, alt)
         "http://localhost:8100",   # admin dashboard (dev)

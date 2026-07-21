@@ -34,6 +34,10 @@ VALIDATION_TOKEN_EXPIRY = 600  # 10 minutes
 # Minimum age gap (years) for the two people to plausibly be parent and child.
 MIN_PARENT_CHILD_AGE_GAP = 12
 
+# The child must fall inside the campaign's eligible age range (inclusive).
+CHILD_MIN_AGE = 4
+CHILD_MAX_AGE = 10
+
 MAX_IMAGE_SIZE = 640
 JPEG_QUALITY = 85
 
@@ -135,6 +139,11 @@ REASONS = {
     "REJECT_TOO_FEW_PEOPLE": "There is only one person. The photo must have exactly two — one child and one parent.",
     "REJECT_NOT_PARENT_CHILD": "We couldn't identify one adult and one child. Please upload a photo of the child with a parent.",
     "REJECT_AGE_GAP": "The two people look too close in age to be a parent and child. Please upload a photo of the child with a parent.",
+    "REJECT_CHILD_AGE": (
+        f"The child's age doesn't meet our criteria — the child's age should be between "
+        f"{CHILD_MIN_AGE} and {CHILD_MAX_AGE} years. Please upload a photo of a child aged "
+        f"{CHILD_MIN_AGE}–{CHILD_MAX_AGE} with a parent."
+    ),
     "APPROVED": "Photo validated successfully!",
 }
 
@@ -274,6 +283,11 @@ def decide(a: PhotoAnalysis, age_gap: int) -> tuple[bool, str]:
         return False, "REJECT_TOO_FEW_PEOPLE"
     if not a.parent_present or not a.child_present:
         return False, "REJECT_NOT_PARENT_CHILD"
+    # The child's estimated age must fall inside the eligible range (4–10). This
+    # also blocks a photo of two adults where the model tags the younger one as
+    # the "child": a 30-something estimate falls outside the range and is rejected.
+    if not (CHILD_MIN_AGE <= a.child_estimated_age <= CHILD_MAX_AGE):
+        return False, "REJECT_CHILD_AGE"
     if age_gap < MIN_PARENT_CHILD_AGE_GAP:
         return False, "REJECT_AGE_GAP"
     return True, "APPROVED"
