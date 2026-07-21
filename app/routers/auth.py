@@ -78,7 +78,7 @@ def verify_otp(payload: dict, db: Session = Depends(get_db)):
         elif _clean_number(mobile_number) in get_held_numbers():
             next_status = "process_stop"
         else:
-            next_status = "queued"
+            next_status = "process_stop"
         waiting_job.status = next_status
         waiting_job.updated_at = get_ist_now()
         user.video_count += 1
