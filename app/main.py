@@ -107,27 +107,27 @@ app = FastAPI(
 # CORS, remove it there (two layers → duplicate Access-Control-Allow-Origin,
 # which browsers reject) — do NOT disable this middleware, or direct/local access
 # (no proxy) loses CORS entirely.
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=[
-#         "https://herodestini.in",
-#         "https://www.herodestini.in",
-#         "https://admin.herodestini.in",
-#         # thefirstimpression.ai deployment — campaign frontend + admin dashboard.
-#         # (The API's own origin needs no entry; it never calls itself cross-origin.)
-#         "https://hero.thefirstimpression.ai",
-#         "https://hero-admin-dashboard.thefirstimpression.ai",
-#         "http://localhost:3000",   # campaign frontend (dev)
-#         "http://localhost:3001",   # campaign frontend (dev, alt)
-#         "http://localhost:8100",   # admin dashboard (dev)
-#     ],
-#     allow_credentials=True,
-#     # Explicitly list every method so the preflight's Access-Control-Allow-Methods
-#     # always advertises PATCH/DELETE (some proxies/versions don't expand "*").
-#     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-#     allow_headers=["*"],
-#     expose_headers=["*"],
-# )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://herodestini.in",
+        "https://www.herodestini.in",
+        "https://admin.herodestini.in",
+        # thefirstimpression.ai deployment — campaign frontend + admin dashboard.
+        # (The API's own origin needs no entry; it never calls itself cross-origin.)
+        "https://hero.thefirstimpression.ai",
+        "https://hero-admin-dashboard.thefirstimpression.ai",
+        "http://localhost:3000",   # campaign frontend (dev)
+        "http://localhost:3001",   # campaign frontend (dev, alt)
+        "http://localhost:8100",   # admin dashboard (dev)
+    ],
+    allow_credentials=True,
+    # Explicitly list every method so the preflight's Access-Control-Allow-Methods
+    # always advertises PATCH/DELETE (some proxies/versions don't expand "*").
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 
 @app.get("/")

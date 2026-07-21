@@ -6,7 +6,11 @@ original config_id, so a mid-flight change never affects them.
 """
 
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
+
+# stitch_pattern / video_prompts are freeform JSON — accept an object OR an array
+# (the DB columns are JSON and can hold either).
+JsonValue = Union[Dict[str, Any], List[Any]]
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -50,12 +54,12 @@ class ConfigCreate(BaseModel):
     video_model: str
     grok_provider: str = "kie"                  # enum(kie, segmind)
     video_quality: str
-    video_prompts: Dict[str, Any] = {}
+    video_prompts: JsonValue = {}
     video_duration_sec: int = 5
     video_provider_1: str                       # enum(seedance, kling)
     video_provider_2: str                       # enum(seedance, kling)
     # Stitch stage
-    stitch_pattern: Dict[str, Any] = {}
+    stitch_pattern: JsonValue = {}
     music_url: Optional[str] = None
     endcard_url: Optional[str] = None
     # Retry / TAT
