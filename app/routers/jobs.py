@@ -1,12 +1,14 @@
+import hmac
 import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_, func, case
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import decrypt_phone, hash_phone
 from app.core.timezone import get_ist_now
@@ -27,9 +29,23 @@ router = APIRouter(
     dependencies=[Depends(get_current_admin)],
 )
 
-# Same prefix, but WITHOUT the admin-auth dependency — for endpoints that must be
-# callable without a token (e.g. the video-send API triggered by other systems).
+# Same prefix, but WITHOUT the admin JWT dependency — for endpoints called by
+# other systems. They're guarded by a static API key instead (X-API-Key header).
 public_router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+
+
+def require_send_video_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    """Guard the send-video endpoint with a shared API key (X-API-Key header).
+
+    Fails closed: if no key is configured on the server, every request is
+    rejected. The admin JWT and the internal service key are also accepted so
+    the dashboard / worker can call it too.
+    """
+    expected = settings.SEND_VIDEO_API_KEY
+    candidates = [k for k in (expected, settings.INTERNAL_API_KEY) if k]
+    if x_api_key and any(hmac.compare_digest(x_api_key, k) for k in candidates):
+        return "api_key"
+    raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # ── Response models ───────────────────────────────────────────────────
@@ -392,11 +408,13 @@ class SendVideoRequest(BaseModel):
 
 @public_router.post("/{job_id}/send-video")
 def send_video_whatsapp(job_id: int, body: Optional[SendVideoRequest] = None,
-                        db: Session = Depends(get_db)):
+                        db: Session = Depends(get_db),
+                        _key: str = Depends(require_send_video_key)):
     """Send the finished video to the WhatsApp number attached to this job.
 
-    No auth — this endpoint is on the public jobs router so external systems can
-    trigger delivery with just the job id (and optionally the S3 URL).
+    Auth: a static API key in the `X-API-Key` header (SEND_VIDEO_API_KEY) — so
+    external systems can trigger delivery with just the job id (and optionally
+    the S3 URL) without an admin login.
 
     Pass the S3 URL in the body (`{"video_url": "https://…mp4"}`); if omitted it
     falls back to the job's stored final_video_url. The number is resolved from

@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # Internal API key (server-to-server, e.g. the worker calling admin APIs)
     INTERNAL_API_KEY: str
 
+    # API key that guards the public send-video endpoint (POST
+    # /api/v1/jobs/{id}/send-video). Callers pass it as the X-API-Key header.
+    SEND_VIDEO_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
 
