@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.core.config import settings as env_settings
 from app.models.app_settings import AppSettings
+from app.models.job import STORIES
 
 CACHE_TTL = 15  # seconds — how long a worker serves config from memory before refreshing
 
@@ -36,6 +37,8 @@ def _defaults() -> dict:
     return {
         "max_videos_per_user": env_settings.MAX_VIDEOS_PER_USER,
         "allow_multiple_requests": env_settings.ALLOW_MULTIPLE_REQUESTS,
+        # Which stories are in the random-assignment pool. Default: all of them.
+        "enabled_stories": list(STORIES),
         "unlimited_numbers": list(DEFAULT_UNLIMITED_NUMBERS),
         "held_numbers": list(DEFAULT_HELD_NUMBERS),
     }
@@ -116,6 +119,15 @@ def get_max_videos_per_user() -> int:
 
 def get_allow_multiple_requests() -> bool:
     return bool(get_settings().get("allow_multiple_requests", env_settings.ALLOW_MULTIPLE_REQUESTS))
+
+
+def get_enabled_stories() -> list:
+    """The stories a new job may be randomly assigned. Always non-empty and a
+    valid subset of STORIES — falls back to ALL stories when the setting is
+    missing, empty, or holds only unknown slugs (so random.choice never fails)."""
+    raw = get_settings().get("enabled_stories") or []
+    valid = [s for s in raw if s in STORIES]
+    return valid or list(STORIES)
 
 
 def get_unlimited_numbers() -> set:

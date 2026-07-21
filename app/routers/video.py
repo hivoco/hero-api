@@ -18,13 +18,13 @@ from app.core.geoip import city_from_ip
 from app.routers.photo_validation import verify_validation_token
 from app.services.settings_service import (
     get_max_videos_per_user, get_unlimited_numbers, get_held_numbers,
-    get_allow_multiple_requests,
+    get_allow_multiple_requests, get_enabled_stories,
 )
 
 from app.models.user import User
 from app.models.user_verification import UserVerification
 from app.models.user_otp import UserOTP
-from app.models.job import Job, PARENT_ROLES, CHILD_ROLES, STORIES
+from app.models.job import Job, PARENT_ROLES, CHILD_ROLES
 from app.models.job_assets import JobAssets
 
 router = APIRouter(prefix="/api/v1/video", tags=["video"])
@@ -145,8 +145,9 @@ async def submit_video_form(
     child_role_val = child_role or None
     # child_name isn't collected on the form → persist as NULL.
     child_name_val = child_name.strip() or None
-    # Story is not user-chosen — every job gets a random one from the 8 slugs.
-    story_val = random.choice(STORIES)
+    # Story is not user-chosen — each job gets a random story from the admin-
+    # enabled pool (Backend Config). One enabled → pinned; none → all 8.
+    story_val = random.choice(get_enabled_stories())
     if not consent_accepted:
         raise HTTPException(status_code=400, detail="You must accept the consent terms to continue.")
     if not photo.filename:

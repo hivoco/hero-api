@@ -31,17 +31,20 @@ LANGUAGES = (
 
 # The eight story slugs — lowercase, no spaces (must match the video pipeline's
 # story templates). Stored verbatim in jobs.story — that column is the chosen
-# story (assigned at random per job).
-STORIES = (
-    "savingdragonseggs",    # Saving Dragon's Eggs
-    "thefairyqueenrescue",  # The Fairy Queen Rescue
-    "savethatpuppy",        # Save That Puppy
-    "thesnowmanattack",     # The Snowman Attack
-    "thedragonswayhome",    # The Dragon's Way Home
-    "thelostkitten",        # The Lost Kitten
-    "missiongoldencrown",   # Mission Golden Crown
-    "themagicalherb",       # The Magical Herb
-)
+# story. At submit a job gets a random story from the admin-enabled pool
+# (settings_service.get_enabled_stories); with one story enabled it's pinned.
+# STORY_TITLES is the single source of truth for the human labels shown in admin.
+STORY_TITLES = {
+    "savingdragonseggs":   "Saving Dragon's Eggs",
+    "thefairyqueenrescue": "The Fairy Queen Rescue",
+    "savethatpuppy":       "Save That Puppy",
+    "thesnowmanattack":    "The Snowman Attack",
+    "thedragonswayhome":   "The Dragon's Way Home",
+    "thelostkitten":       "The Lost Kitten",
+    "missiongoldencrown":  "Mission Golden Crown",
+    "themagicalherb":      "The Magical Herb",
+}
+STORIES = tuple(STORY_TITLES.keys())
 
 
 class Job(Base):

@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.admin_auth import get_current_admin, require_superadmin
 from app.services.settings_service import get_settings, update_settings
 from app.services.vision_service import get_active_vision
+from app.models.job import STORIES, STORY_TITLES
 
 router = APIRouter(prefix="/api/v1/settings", tags=["app-settings"])
 
@@ -30,6 +31,7 @@ def _normalize_number(raw: str) -> Optional[str]:
 class BackendConfigUpdate(BaseModel):
     max_videos_per_user: Optional[int] = None
     allow_multiple_requests: Optional[bool] = None
+    enabled_stories: Optional[List[str]] = None
     unlimited_numbers: Optional[List[str]] = None
     held_numbers: Optional[List[str]] = None
 
@@ -39,6 +41,8 @@ def get_backend_config(db: Session = Depends(get_db), admin: str = Depends(get_c
     vc = get_active_vision(db)
     return {
         "settings": get_settings(),
+        # Single source of truth for the story checkboxes (slug + human label).
+        "available_stories": [{"slug": s, "title": STORY_TITLES[s]} for s in STORIES],
         "active_vision": (
             {"id": vc.id, "provider": vc.provider, "model_name": vc.model_name} if vc else None
         ),
@@ -56,6 +60,14 @@ def update_backend_config(body: BackendConfigUpdate, admin: str = Depends(requir
 
     if body.allow_multiple_requests is not None:
         patch["allow_multiple_requests"] = body.allow_multiple_requests
+
+    if body.enabled_stories is not None:
+        # Keep only known slugs, de-duped and in canonical STORIES order.
+        selected = {s for s in body.enabled_stories if s in STORIES}
+        unknown = [s for s in body.enabled_stories if s not in STORIES]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unknown story slug(s): {', '.join(unknown)}")
+        patch["enabled_stories"] = [s for s in STORIES if s in selected]
 
     if body.unlimited_numbers is not None:
         patch["unlimited_numbers"] = sorted({n for n in (_normalize_number(x) for x in body.unlimited_numbers) if n})
