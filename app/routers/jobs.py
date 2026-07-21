@@ -7,12 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_, func, case
 from pydantic import BaseModel
+from jose import jwt, JWTError
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import decrypt_phone, hash_phone
 from app.core.timezone import get_ist_now
-from app.core.admin_auth import get_current_admin
+from app.core.admin_auth import get_current_admin, ALGORITHM
 from app.core.otp import send_failed_message, send_video
 from app.core.redis import FeatureFlags, Cache
 from app.models.job import (
@@ -34,18 +35,36 @@ router = APIRouter(
 public_router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
 
-def require_send_video_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
-    """Guard the send-video endpoint with a shared API key (X-API-Key header).
+def require_send_video_key(
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+):
+    """Guard the send-video endpoint. Accepts EITHER:
 
-    Fails closed: if no key is configured on the server, every request is
-    rejected. The admin JWT and the internal service key are also accepted so
-    the dashboard / worker can call it too.
+      1. a static API key in the `X-API-Key` header (external systems) — the
+         send-video key or the internal service key, OR
+      2. an `Authorization: Bearer <token>` where the token is a valid admin JWT
+         or the internal key — so the admin dashboard and the worker can call it.
+
+    Fails closed with 401 if neither is present/valid.
     """
-    expected = settings.SEND_VIDEO_API_KEY
-    candidates = [k for k in (expected, settings.INTERNAL_API_KEY) if k]
-    if x_api_key and any(hmac.compare_digest(x_api_key, k) for k in candidates):
-        return "api_key"
-    raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    # 1) X-API-Key header
+    for k in (settings.SEND_VIDEO_API_KEY, settings.INTERNAL_API_KEY):
+        if k and x_api_key and hmac.compare_digest(x_api_key, k):
+            return "api_key"
+
+    # 2) Authorization: Bearer <admin JWT | internal key>
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+        if settings.INTERNAL_API_KEY and hmac.compare_digest(token, settings.INTERNAL_API_KEY):
+            return "internal"
+        try:
+            jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[ALGORITHM])
+            return "admin"
+        except JWTError:
+            pass
+
+    raise HTTPException(status_code=401, detail="Invalid or missing credentials")
 
 
 # ── Response models ───────────────────────────────────────────────────
