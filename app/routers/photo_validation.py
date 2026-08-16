@@ -81,6 +81,9 @@ class PhotoAnalysis(BaseModel):
     is_real_photo: bool = Field(description="True if a real photo, False if a screenshot / photo-of-a-photo / poster")
     is_appropriate: bool = Field(description="True if there is no nudity, sexual or otherwise inappropriate content")
     faces_unobstructed: bool = Field(description="True if faces are not heavily covered by hands/objects/masks")
+    # Defaulted True (fail-open): if the model omits it we don't block on
+    # frontality — the frontend face gate already enforces looking at the camera.
+    faces_frontal: bool = Field(True, description="True if BOTH faces look toward the camera AND are upright/straight (a small left/right turn or any up/down nod is fine); False if a face is turned ~45 degrees or more to the side (profile) OR tilted sideways / cocked toward a shoulder")
 
 
 # Appended to the (admin-editable) prompt so the model returns a clean JSON object.
@@ -94,7 +97,8 @@ _SCHEMA_HINT = (
     '  "quality_ok": boolean,\n'
     '  "is_real_photo": boolean,\n'
     '  "is_appropriate": boolean,\n'
-    '  "faces_unobstructed": boolean'
+    '  "faces_unobstructed": boolean,\n'
+    '  "faces_frontal": boolean'
 )
 
 
@@ -135,6 +139,7 @@ REASONS = {
     "REJECT_SCREENSHOT": "This looks like a screenshot or a photo of a screen/printout. Please upload the original photo from your gallery.",
     "REJECT_NSFW": "This photo has inappropriate content. Please upload a family-friendly photo.",
     "REJECT_OBSTRUCTED": "A face is covered (hand, mask or object). Please upload a photo where both faces are clearly visible.",
+    "REJECT_NOT_FRONTAL": "Please look straight into the camera and keep your head level — both faces should face the camera, not turned to the side or tilted.",
     "REJECT_TOO_MANY_PEOPLE": "There are more than two people. The photo must have exactly two — one child and one parent.",
     "REJECT_TOO_FEW_PEOPLE": "There is only one person. The photo must have exactly two — one child and one parent.",
     "REJECT_NOT_PARENT_CHILD": "We couldn't identify one adult and one child. Please upload a photo of the child with a parent.",
@@ -276,6 +281,10 @@ def decide(a: PhotoAnalysis, age_gap: int) -> tuple[bool, str]:
         return False, "REJECT_UNCLEAR"
     if not a.faces_unobstructed:
         return False, "REJECT_OBSTRUCTED"
+    # Both faces must look at the camera (a small turn / any up-down tilt is ok;
+    # a ~45°+ side turn is not) → "look into the camera".
+    if not a.faces_frontal:
+        return False, "REJECT_NOT_FRONTAL"
     # Exactly two people: one parent + one child (not more, not fewer)
     if a.number_of_people > 2:
         return False, "REJECT_TOO_MANY_PEOPLE"
