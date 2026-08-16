@@ -160,6 +160,12 @@ def _job_to_dict(job: Job, mobile_number: Optional[str]) -> dict:
 
 
 # ── List ──────────────────────────────────────────────────────────────
+# Hard visibility floor for the admin Jobs table: the /list endpoint NEVER
+# returns jobs created before this date, regardless of any filter. Only the row
+# list is gated — stats/summary and reports still count all jobs.
+ADMIN_JOBS_VISIBLE_FROM = datetime(2026, 8, 16, 0, 0, 0)
+
+
 @router.get("/list", response_model=PaginatedJobsResponse)
 def list_jobs(
     db: Session = Depends(get_db),
@@ -176,7 +182,9 @@ def list_jobs(
     job_id: Optional[int] = Query(None),
 ):
     query = db.query(Job)
-    filters = []
+    # Hard floor — the list never shows jobs created before 16 Aug 2026 (this
+    # filter is always applied and can't be overridden by the date filters).
+    filters = [Job.created_at >= ADMIN_JOBS_VISIBLE_FROM]
 
     if status:
         # Accept a single status or a comma-separated group (used by the admin
